@@ -3,6 +3,7 @@
 #include <sys/fcntl.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 #include <assert.h>
 #include <err.h>
@@ -14,7 +15,9 @@
 
 #include "dwc.h"
 
-#define DBG(fmt, ...) fprintf(stderr, fmt, ## __VA_ARGS__ )
+static double now(void);
+
+#define DBG(fmt, ...) fprintf(stderr, "%f: " fmt, now(), ## __VA_ARGS__ )
 //#define DBG(fmt, ...) do {} while (0)
 
 static void
@@ -154,6 +157,7 @@ do_rx(struct worker *w, int is_first_worker, int is_last_worker, int id)
 			       id);
 			return;
 		}
+		DBG("Worker %d starts receiving data\n", id);
 		if (!is_first_worker) {
 			if (w[-1].suffix_string)
 				process_split_string(w[-1].suffix_string, w->prefix_string);
@@ -187,6 +191,18 @@ do_rx(struct worker *w, int is_first_worker, int is_last_worker, int id)
 	}
 }
 
+static struct timeval start;
+
+static double
+now(void)
+{
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	tv.tv_sec -= start.tv_sec;
+	tv.tv_usec -= start.tv_usec;
+	return tv.tv_sec + tv.tv_usec * 1e-6;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -201,11 +217,21 @@ main(int argc, char *argv[])
 	int idx;
 	int *poll_slots_to_workers;
 	int offline;
+	int prepopulate;
+	int poll_slots_in_use;
 
 	init_malloc();
+	gettimeofday(&start, NULL);
 
 	if (argc == 1)
 		errx(1, "arguments are either --offline and a list of files, or a list of ip port1 port2 triples");
+
+	prepopulate = 0;
+	if (!strcmp(argv[1], "--prepopulate")) {
+		prepopulate = 1;
+		argv++;
+		argc--;
+	}
 
 	offline = 0;
 	if (!strcmp(argv[1], "--offline"))
@@ -258,11 +284,13 @@ main(int argc, char *argv[])
 	workers[nr_workers - 1].end_of_chunk = size;
 
 	workers_left_alive = nr_workers;
+	poll_slots_in_use = nr_workers;
+	DBG("Start main loop\n");
 	while (workers_left_alive != 0) {
-		int r = poll(polls, workers_left_alive, -1);
+		int r = poll(polls, poll_slots_in_use, -1);
 		if (r < 0)
 			err(1, "poll()");
-		for (x = 0; x < workers_left_alive && r; x++) {
+		for (x = 0; x < poll_slots_in_use && r; x++) {
 			if (!polls[x].revents)
 				continue;
 			r--;
@@ -287,13 +315,42 @@ main(int argc, char *argv[])
 					err(1, "sending to worker");
 				assert(workers[idx].send_offset <= workers[idx].end_of_chunk);
 				if (workers[idx].send_offset == workers[idx].end_of_chunk) {
-					close(workers[idx].to_worker_fd);
-					workers[idx].to_worker_fd = -1;
-					polls[x].events = POLLIN;
-					polls[x].revents = 0;
-					polls[x].fd = workers[idx].from_worker_fd;
 					DBG("Finished sending input to worker %d\n",
 					       idx);
+					if (prepopulate) {
+						memmove(poll_slots_to_workers + x,
+							poll_slots_to_workers + x + 1,
+							(poll_slots_in_use - x - 1) * sizeof(int));
+						memmove(polls + x,
+							polls + x + 1,
+							(poll_slots_in_use - x - 1) * sizeof(polls[0]));
+						poll_slots_in_use--;
+						if (poll_slots_in_use == 0) {
+							/* Okay, we've
+							   done the
+							   prepopulate
+							   phase.
+							   Switch
+							   modes. */
+							DBG("Finished prepopulate phase\n");
+							for (idx = 0; idx < nr_workers; idx++) {
+								polls[idx].events = POLLIN;
+								polls[idx].revents = 0;
+								polls[idx].fd = workers[idx].from_worker_fd;
+								poll_slots_to_workers[idx] = idx;
+								close(workers[idx].to_worker_fd);
+								workers[idx].to_worker_fd = -1;
+							}
+							DBG("All workers go\n");
+							poll_slots_in_use = nr_workers;
+						}
+					} else {
+						close(workers[idx].to_worker_fd);
+						workers[idx].to_worker_fd = -1;
+						polls[x].events = POLLIN;
+						polls[x].revents = 0;
+						polls[x].fd = workers[idx].from_worker_fd;
+					}
 				}
 			} else if (polls[x].revents & POLLIN) {
 				do_rx(workers + idx,
@@ -307,11 +364,14 @@ main(int argc, char *argv[])
 					memmove(polls + x,
 						polls + x + 1,
 						(workers_left_alive - x - 1) * sizeof(polls[0]));
+					poll_slots_in_use--;
 					workers_left_alive--;
 				}
 			}
 		}
 	}
+
+	DBG("All done\n");
 
 	for (idx = 0; idx < NR_HASH_TABLE_SLOTS; idx++) {
 		struct word *w;

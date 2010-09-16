@@ -1,5 +1,6 @@
 /* Worker process */
 #include <sys/types.h>
+#include <sys/fcntl.h>
 #include <sys/poll.h>
 #include <arpa/inet.h>
 #include <assert.h>
@@ -213,6 +214,35 @@ main(int argc, char *argv[])
 			errx(1, "don't want other arguments with --stdin mode");
 		rx_fd = 0;
 		tx_fd = 1;
+	} else if (!strcmp(argv[1], "--prepopulate")) {
+		int tmp;
+
+		if (argc != 4)
+			errx(1, "wrong number of arguments for prepopulate mode");
+		accept_on_ports(atol(argv[2]), atol(argv[3]), &rx_fd, &tx_fd);
+		tmp = open("/tmp/worker_dump.txt", O_RDWR | O_TRUNC | O_CREAT, 0666);
+		if (tmp < 0)
+			err(1, "open /tmp/worker_dump.txt");
+		while (1) {
+			unsigned char buf[16384];
+			ssize_t avail;
+			size_t written;
+			ssize_t written_this_time;
+			avail = read(rx_fd, buf, sizeof(buf));
+			if (avail == 0)
+				break;
+			if (avail < 0)
+				err(1, "receiving for pre-populate");
+			for (written = 0; written < avail; written += written_this_time) {
+				written_this_time = write(tmp, buf + written, avail - written);
+				if (written_this_time <= 0)
+					err(1, "writing for pre-populate");
+			}
+		}
+		printf("Starting compute phase\n");
+		close(rx_fd);
+		rx_fd = tmp;
+		lseek(rx_fd, 0, SEEK_SET);
 	} else {
 		if (argc != 3)
 			errx(1, "wrong number of arguments for non-stdin mode");

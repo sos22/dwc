@@ -1,5 +1,5 @@
-CFLAGS = -Os -Wall -g
-LDFLAGS =
+CFLAGS = -Os -Wall -g -m32
+LDFLAGS = -m32
 
 all: worker driver chunk
 
