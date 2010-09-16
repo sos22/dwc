@@ -225,7 +225,7 @@ main(int argc, char *argv[])
 				  &workers[x].from_worker_fd);
 
 		polls[x].fd = workers[x].to_worker_fd;
-		polls[x].events = POLLOUT|POLLERR;
+		polls[x].events = POLLOUT;
 
 		workers[x].send_offset = x * (size / nr_workers);
 		if (x != 0)
@@ -245,11 +245,13 @@ main(int argc, char *argv[])
 				continue;
 			r--;
 			idx = poll_slots_to_workers[x];
+
+			assert(!(polls[x].revents & POLLNVAL));
 			if (polls[x].revents & POLLERR)
 				errx(1, "error on worker %d", idx);
-			if (polls[x].revents & (POLLHUP | POLLNVAL))
-				errx(1, "worker %d hung up on us unexpectedly (%x)", idx,
-				     polls[x].revents);
+			if (polls[x].revents & POLLHUP)
+				errx(1, "worker %d hung up on us", idx);
+
 			if (polls[x].revents & POLLOUT) {
 				ssize_t s;
 				assert(workers[idx].send_offset < workers[idx].end_of_chunk);
@@ -266,13 +268,14 @@ main(int argc, char *argv[])
 				if (workers[idx].send_offset == workers[idx].end_of_chunk) {
 					close(workers[idx].to_worker_fd);
 					workers[idx].to_worker_fd = -1;
-					polls[x].events = POLLIN | POLLERR;
+					polls[x].events = POLLIN;
 					polls[x].revents = 0;
 					polls[x].fd = workers[idx].from_worker_fd;
 					DBG("Finished sending input to worker %d\n",
 					       idx);
 				}
 			} else if (polls[x].revents & POLLIN) {
+				DBG("revents %x for worker %d\n", polls[x].revents, idx);
 				do_rx(workers + idx,
 				      idx == 0,
 				      idx == nr_workers - 1,
@@ -281,6 +284,9 @@ main(int argc, char *argv[])
 					memmove(poll_slots_to_workers + x,
 						poll_slots_to_workers + x + 1,
 						(workers_left_alive - x - 1) * sizeof(int));
+					memmove(polls + x,
+						polls + x + 1,
+						(workers_left_alive - x - 1) * sizeof(polls[0]));
 					workers_left_alive--;
 				}
 			}
