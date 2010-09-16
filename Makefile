@@ -7,4 +7,4 @@ driver: common.o driver.o
 	gcc $^ -o $@
 
 %.o: %.c dwc.h
-	gcc -c -Wall -g $< -o $@
+	gcc -Os -c -Wall -g $< -o $@
