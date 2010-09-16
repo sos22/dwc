@@ -14,8 +14,8 @@
 
 #include "dwc.h"
 
-//#define DBG(fmt, ...) printf(fmt, ## __VA_ARGS__ )
-#define DBG(fmt, ...) do {} while (0)
+#define DBG(fmt, ...) fprintf(stderr, fmt, ## __VA_ARGS__ )
+//#define DBG(fmt, ...) do {} while (0)
 
 static void
 connect_to_worker(const char *ip, const char *to_worker_port,
@@ -125,7 +125,6 @@ do_rx(struct worker *w, int is_first_worker, int is_last_worker, int id)
 {
 	ssize_t received;
 
-	DBG("RX from %d\n", id);
 	/* Receive as much as possible. */
 	if (w->from_worker_fd > 0) {
 		if (RX_BUFFER_SIZE - w->rx_buffer_avail < MIN_READ_SIZE) {
@@ -145,7 +144,6 @@ do_rx(struct worker *w, int is_first_worker, int is_last_worker, int id)
 			err(1, "receiving from worker");
 		} else {
 			w->rx_buffer_avail += received;
-			DBG("Received %zd from worker %d\n", received, id);
 		}
 	}
 
@@ -287,7 +285,6 @@ main(int argc, char *argv[])
 					errx(1, "worker hung up on us");
 				if (s < 0)
 					err(1, "sending to worker");
-				DBG("Squirted %zd at worker %d\n", s, x);
 				assert(workers[idx].send_offset <= workers[idx].end_of_chunk);
 				if (workers[idx].send_offset == workers[idx].end_of_chunk) {
 					close(workers[idx].to_worker_fd);
@@ -299,7 +296,6 @@ main(int argc, char *argv[])
 					       idx);
 				}
 			} else if (polls[x].revents & POLLIN) {
-				DBG("revents %x for worker %d\n", polls[x].revents, idx);
 				do_rx(workers + idx,
 				      idx == 0,
 				      idx == nr_workers - 1,

@@ -1,13 +1,19 @@
+CFLAGS = -Os -Wall -g
+LDFLAGS =
+
 all: worker driver chunk
 
 worker: common.o dwc.o
-	gcc $^ -o $@
+	gcc $(LDFLAGS) $^ -o $@
 
 driver: common.o driver.o
-	gcc $^ -o $@
+	gcc $(LDFLAGS) $^ -o $@
 
 chunk: chunk.c
-	gcc -Wall -g $^ -o $@
+	gcc $(LDFLAGS) $(CFLAGS) $^ -o $@
 
 %.o: %.c dwc.h
-	gcc -Os -c -Wall -g $< -o $@
+	gcc $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f *.o worker driver chunk

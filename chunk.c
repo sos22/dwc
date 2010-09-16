@@ -65,7 +65,7 @@ main(int argc, char *argv[])
 			}
 		}
 
-		printf("Wrote %zd to %s\n", written_this_file, output);
+		printf("Wrote %ld to %s\n", written_this_file, output);
 		if (fclose(out) == EOF)
 			err(1, "closing %s", output);
 		free(output);
