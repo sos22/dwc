@@ -6,7 +6,7 @@ struct word {
 	unsigned char word[];
 };
 
-#define NR_HASH_TABLE_SLOTS 2048
+#define NR_HASH_TABLE_SLOTS 131072
 extern struct word * hash_table[NR_HASH_TABLE_SLOTS];
 
 void *bump_malloc(size_t s);
