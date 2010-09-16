@@ -202,35 +202,53 @@ main(int argc, char *argv[])
 	unsigned x;
 	int idx;
 	int *poll_slots_to_workers;
+	int offline;
 
 	init_malloc();
 
-	fd = open(argv[1], O_RDONLY);
-	if (fd < 0)
-		err(1, "open(%s)", argv[1]);
-	if (fstat(fd, &statbuf) < 0)
-		err(1, "stat(%s)", argv[1]);
+	offline = 0;
+	if (!strcmp(argv[1], "--offline"))
+		offline = 1;
 
-	size = statbuf.st_size;
+	if (!offline) {
+		fd = open(argv[1], O_RDONLY);
+		if (fd < 0)
+			err(1, "open(%s)", argv[1]);
+		if (fstat(fd, &statbuf) < 0)
+			err(1, "stat(%s)", argv[1]);
+		size = statbuf.st_size;
+		nr_workers = (argc - 2) / 3;
+	} else {
+		fd = -1;
+		size = 0;
+		nr_workers = argc - 2;
+	}
 
-	nr_workers = (argc - 2) / 3;
 	workers = calloc(nr_workers, sizeof(workers[0]));
 	polls = calloc(nr_workers, sizeof(polls[0]));
 	poll_slots_to_workers = calloc(nr_workers, sizeof(polls[0]));
 	for (x = 0; x < nr_workers; x++) {
-		connect_to_worker(argv[x * 3 + 2],
-				  argv[x * 3 + 3],
-				  argv[x * 3 + 4],
-				  &workers[x].to_worker_fd,
-				  &workers[x].from_worker_fd);
+		if (offline) {
+			workers[x].to_worker_fd = -1;
+			workers[x].from_worker_fd = open(argv[x + 2], O_RDONLY | O_NONBLOCK);
+			if (workers[x].from_worker_fd < 0)
+				err(1, "opening %s", argv[x + 2]);
+			polls[x].fd = workers[x].from_worker_fd;
+			polls[x].events = POLLIN;
+		} else {
+			connect_to_worker(argv[x * 3 + 2],
+					  argv[x * 3 + 3],
+					  argv[x * 3 + 4],
+					  &workers[x].to_worker_fd,
+					  &workers[x].from_worker_fd);
 
-		polls[x].fd = workers[x].to_worker_fd;
-		polls[x].events = POLLOUT;
+			polls[x].fd = workers[x].to_worker_fd;
+			polls[x].events = POLLOUT;
 
-		workers[x].send_offset = x * (size / nr_workers);
-		if (x != 0)
-			workers[x-1].end_of_chunk = workers[x].send_offset;
-
+			workers[x].send_offset = x * (size / nr_workers);
+			if (x != 0)
+				workers[x-1].end_of_chunk = workers[x].send_offset;
+		}
 		poll_slots_to_workers[x] = x;
 	}
 	workers[nr_workers - 1].end_of_chunk = size;

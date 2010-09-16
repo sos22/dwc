@@ -206,7 +206,12 @@ main(int argc, char *argv[])
 
 	init_malloc();
 
-	accept_on_ports(atol(argv[1]), atol(argv[2]), &rx_fd, &tx_fd);
+	if (!strcmp(argv[1], "--stdin")) {
+		rx_fd = 0;
+		tx_fd = 1;
+	} else {
+		accept_on_ports(atol(argv[1]), atol(argv[2]), &rx_fd, &tx_fd);
+	}
 
 	set_nonblock(tx_fd);
 
