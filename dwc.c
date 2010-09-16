@@ -201,7 +201,7 @@ main(int argc, char *argv[])
 {
 	unsigned initial_word_size;
 	unsigned word_end;
-	int sent_initial_word;
+	volatile int sent_initial_word;
 	int idx;
 
 	init_malloc();
