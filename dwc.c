@@ -111,7 +111,7 @@ send_word(const unsigned char *start, unsigned size)
 			unsigned c1;
 			*(unsigned short *)(tx_buffer + prod) = size;
 			c1 = TX_BUFFER_SIZE - (prod + 2);
-			assert(c1 < size);
+			assert(c1 <= size);
 			memcpy(tx_buffer + prod + 2,
 			       start,
 			       c1);
