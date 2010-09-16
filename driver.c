@@ -206,11 +206,17 @@ main(int argc, char *argv[])
 
 	init_malloc();
 
+	if (argc == 1)
+		errx(1, "arguments are either --offline and a list of files, or a list of ip port1 port2 triples");
+
 	offline = 0;
 	if (!strcmp(argv[1], "--offline"))
 		offline = 1;
 
 	if (!offline) {
+		if ((argc - 2) % 3)
+			errx(1, "non-integer number of workers?");
+
 		fd = open(argv[1], O_RDONLY);
 		if (fd < 0)
 			err(1, "open(%s)", argv[1]);

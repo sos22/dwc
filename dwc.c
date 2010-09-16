@@ -206,10 +206,16 @@ main(int argc, char *argv[])
 
 	init_malloc();
 
+	if (argc == 1)
+		errx(1, "need either --stdin or two port numbers");
 	if (!strcmp(argv[1], "--stdin")) {
+		if (argc != 2)
+			errx(1, "don't want other arguments with --stdin mode");
 		rx_fd = 0;
 		tx_fd = 1;
 	} else {
+		if (argc != 3)
+			errx(1, "wrong number of arguments for non-stdin mode");
 		accept_on_ports(atol(argv[1]), atol(argv[2]), &rx_fd, &tx_fd);
 	}
 
