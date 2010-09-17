@@ -299,8 +299,14 @@ main(int argc, char *argv[])
 			assert(!(polls[x].revents & POLLNVAL));
 			if (polls[x].revents & POLLERR)
 				errx(1, "error on worker %d", idx);
-			if (polls[x].revents & POLLHUP)
-				errx(1, "worker %d hung up on us", idx);
+			if (polls[x].revents & POLLHUP) {
+				if (polls[x].events == POLLIN) {
+					polls[x].revents = POLLIN;
+					warnx("worker %d hung up on us", idx);
+				} else {
+					errx(1, "worker %d hung up on us", idx);
+				}
+			}
 
 			if (polls[x].revents & POLLOUT) {
 				ssize_t s;
