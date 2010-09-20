@@ -42,6 +42,11 @@ replenish_rx_buffer()
 		rx_buffer_avail -= rx_buffer_used;
 		rx_buffer_used = 0;
 	}
+	/* This has a nasty side effect: if a single word is bigger
+	 * than 1MB, we split it.  Not necessarily entirely correct,
+	 * but not completely unreasonable. */
+	if (rx_buffer_avail == RX_BUFFER_SIZE)
+		return;
 	rx = read(rx_fd, rx_buffer + rx_buffer_avail, RX_BUFFER_SIZE - rx_buffer_avail);
 	if (rx < 0)
 		err(1, "reading input");
