@@ -317,7 +317,6 @@ main(int argc, char *argv[])
 	int prepopulate;
 	int poll_slots_in_use;
 	struct mallinfo mi;
-	int cntr;
 
 	init_malloc(false);
 	gettimeofday(&start, NULL);
@@ -384,16 +383,12 @@ main(int argc, char *argv[])
 
 	workers_left_alive = nr_workers;
 	poll_slots_in_use = nr_workers;
-	cntr = 0;
 	DBG("Start main loop\n");
 	while (workers_left_alive != 0) {
 		int r = poll(polls, poll_slots_in_use, -1);
 		if (r < 0)
 			err(1, "poll()");
 		for (x = 0; x < poll_slots_in_use && r; x++) {
-			if (x == 3 && (cntr++ % 16))
-				continue;
-
 			if (!polls[x].revents)
 				continue;
 			r--;
