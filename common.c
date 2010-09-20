@@ -56,9 +56,9 @@ bump_word_counter(const unsigned char *start, unsigned size,
 	struct word **pprev, *cursor;
 
 	h = 0;
-	for (idx = 0; idx < size / 8; idx++)
+	for (idx = 0; idx < size / sizeof(unsigned long); idx++)
 		h = ((unsigned long *)start)[idx] + h * 524287;
-	for (idx = size & ~7; idx < size; idx++)
+	for (idx = size & ~(sizeof(unsigned long) - 1); idx < size; idx++)
 		h = start[idx] + h * 127;
 
 	idx = h % NR_HASH_TABLE_SLOTS;
