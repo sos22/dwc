@@ -224,8 +224,34 @@ compact_heap(struct worker *worker, int nr_workers, struct pollfd *polls)
 	int earliest_finished_slot;
 	struct mallinfo mi;
 	int throttle_worker_slot;
+	bool some_worker_unready;
 
 	DBG("Start hash table GC\n");
+
+	/* Make sure that every worker has its prefix and suffix
+	 * string before doing anything */
+	some_worker_unready = false;
+	for (x = 0; x < nr_workers; x++) {
+		if (!worker[x].prefix_string || !worker[x].suffix_string) {
+			DBG("Worker %d hasn't completed its boundary strings", x);
+			some_worker_unready = true;
+		}
+	}
+
+	if (some_worker_unready) {
+		/* Okay, we're not ready for hash compaction.
+		   Throttle every worker which has prefix and
+		   suffix. */
+		for (x = 0; x < nr_workers; x++) {
+			if (worker[x].prefix_string && worker[x].suffix_string) {
+				if (polls[x].events & POLLIN)
+					DBG("Throttle %d for pre-compaction\n", x);
+				polls[x].events &= ~POLLIN;
+			}
+		}
+		return;
+	}
+
 	earliest_finished_slot = NR_HASH_TABLE_SLOTS;
 	for (x = 0; x < nr_workers; x++) {
 		DBG("worker %d has finished slot %d\n", x, worker[x].finished_hash_entries);
