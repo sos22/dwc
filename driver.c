@@ -22,7 +22,7 @@
 #define THROTTLE_HEAP_SIZE (256 << 20)
 
 /* How much of the hash table have we GC'd? */
-static int last_gced_hash_slot;
+static int last_gced_hash_slot = -1;
 
 static double now(void);
 
@@ -65,15 +65,17 @@ struct worker {
 
 	int finished_hash_entries;
 
-	int recent_hash_prod;
-	int recent_hashes[64];
-
 	/* RX machine */
 #define RX_BUFFER_SIZE (1 << 20)
 #define MIN_READ_SIZE (64 << 10)
 
 	char *prefix_string;
 	char *suffix_string;
+
+	char *current_word;
+	int current_word_offset;
+	int current_word_len;
+	int current_word_count;
 
 	int finished;
 
@@ -88,20 +90,38 @@ read_string(struct worker *w)
 	int size;
 	char *res;
 
-	if (w->rx_buffer_used + 2 > w->rx_buffer_avail)
+	if (w->rx_buffer_used + 4 > w->rx_buffer_avail)
 		return NULL;
 
-	size = *(unsigned short *)(w->rx_buffer + w->rx_buffer_used);
-	if (w->rx_buffer_used + size + 2 > w->rx_buffer_avail)
-		return NULL;
+	if (!w->current_word) {
+		size = *(unsigned *)(w->rx_buffer + w->rx_buffer_used);
+		if (size > RX_BUFFER_SIZE - 1000)
+			DBG("Enormous string: %d\n", size);
+		w->current_word = malloc(size + 1);
+		w->current_word_offset = 0;
+		w->current_word_len = size;
+		w->rx_buffer_used += 4;
+	}
 
-	res = malloc(size + 1);
-	res[size] = 0;
-	memcpy(res, w->rx_buffer + w->rx_buffer_used + 2, size);
+	if (w->rx_buffer_used < w->rx_buffer_avail) {
+		int to_copy;
+		to_copy = w->current_word_len - w->current_word_offset;
+		if (w->rx_buffer_used + to_copy > w->rx_buffer_avail)
+			to_copy = w->rx_buffer_avail - w->rx_buffer_used;
+		memcpy(w->current_word + w->current_word_offset,
+		       w->rx_buffer + w->rx_buffer_used,
+		       to_copy);
+		w->current_word_offset += to_copy;
+		w->rx_buffer_used += to_copy;
+		if (w->current_word_offset == w->current_word_len) {
+			w->current_word[w->current_word_offset] = 0;
+			res = w->current_word;
+			w->current_word = NULL;
+			return res;
+		}
+	}
 
-	w->rx_buffer_used += 2 + size;
-
-	return res;
+	return NULL;
 }
 
 static void
@@ -125,34 +145,31 @@ process_split_string(char *prefix, char *suffix, int worker1, int worker2)
 static int
 process_word_entry(struct worker *w, int wid)
 {
-	int size;
-	unsigned count;
 	int idx;
+	char *word;
 
-	if (w->rx_buffer_used + 6 > w->rx_buffer_avail)
+	if (w->rx_buffer_used + 8 > w->rx_buffer_avail)
 		return 0;
-	size = *(unsigned short *)(w->rx_buffer + w->rx_buffer_used + 4);
-	if (w->rx_buffer_used + 6 + size > w->rx_buffer_avail)
+	if (w->current_word_count == 0) {
+		w->current_word_count = *(unsigned *)(w->rx_buffer + w->rx_buffer_used);
+		assert(w->current_word_count > 0);
+		w->rx_buffer_used += 4;
+	}
+	word = read_string(w);
+	if (!word)
 		return 0;
+	idx = bump_word_counter((unsigned char *)word, strlen(word), w->current_word_count);
 
-	count = *(unsigned *)(w->rx_buffer + w->rx_buffer_used);
-	idx = bump_word_counter(w->rx_buffer + w->rx_buffer_used + 6, size, count);
-	w->rx_buffer_used += 6 + size;
-	if (idx < w->finished_hash_entries + 1) {
-		int s;
+	if (idx < w->finished_hash_entries + 1)
 		DBG("worker %d went backwards through table: %d < %d\n",
 		    wid, idx, w->finished_hash_entries);
-		s = w->recent_hash_prod - 64;
-		if (s < 0)
-			s = 0;
-		while (s != w->recent_hash_prod) {
-			DBG("Recently produced %d\n", w->recent_hashes[s % 64]);
-			s++;
-		}
-	}
-	w->recent_hashes[w->recent_hash_prod++ % 64] = idx;
 	assert(idx >= w->finished_hash_entries + 1);
 	w->finished_hash_entries = idx - 1;
+
+	/* Reset for next word */
+	free(word);
+	w->current_word_count = 0;
+
 	return 1;
 }
 

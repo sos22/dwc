@@ -85,70 +85,41 @@ retry:
 }
 
 static void
+transfer_bytes(const void *_bytes, unsigned nr_bytes)
+{
+	const unsigned char *bytes = _bytes;
+	unsigned transferred;
+	unsigned this_time;
+
+	for (transferred = 0;
+	     transferred < nr_bytes;
+	     transferred += this_time) {
+		if ( tx_buffer_producer - tx_buffer_consumer == TX_BUFFER_SIZE )
+			flush_some_output();
+		this_time = nr_bytes - transferred;
+		if ( this_time + tx_buffer_producer - tx_buffer_consumer > TX_BUFFER_SIZE )
+			this_time = TX_BUFFER_SIZE - (tx_buffer_producer - tx_buffer_consumer);
+		if ( (this_time + tx_buffer_producer) / TX_BUFFER_SIZE !=
+		     tx_buffer_producer / TX_BUFFER_SIZE )
+			this_time = TX_BUFFER_SIZE - (tx_buffer_producer % TX_BUFFER_SIZE);
+		memcpy(tx_buffer + (tx_buffer_producer % TX_BUFFER_SIZE),
+		       bytes + transferred,
+		       this_time);
+		tx_buffer_producer += this_time;
+	}
+}
+
+static void
 send_word(const unsigned char *start, unsigned size)
 {
-	unsigned tx_size;
-	unsigned prod;
-
-	/* Pascal strings with two-byte length header */
-	tx_size = size + 2;
-
-	while (tx_size + tx_buffer_producer - tx_buffer_consumer > TX_BUFFER_SIZE)
-		flush_some_output();
-
-	prod = tx_buffer_producer % TX_BUFFER_SIZE;
-	if ( (tx_buffer_producer + tx_size) / TX_BUFFER_SIZE ==
-	     tx_buffer_producer / TX_BUFFER_SIZE ) {
-		assert(prod + 2 + size <= TX_BUFFER_SIZE);
-		*(unsigned short *)(tx_buffer + prod) = size;
-		memcpy(tx_buffer + prod + 2,
-		       start, size);
-	} else {
-		if ( prod == TX_BUFFER_SIZE - 1) {
-			tx_buffer[TX_BUFFER_SIZE-1] = size & 0xff;
-			tx_buffer[0] = size >> 8;
-			memcpy(tx_buffer + 1, start, size);
-		} else {
-			unsigned c1;
-			*(unsigned short *)(tx_buffer + prod) = size;
-			c1 = TX_BUFFER_SIZE - (prod + 2);
-			assert(c1 <= size);
-			memcpy(tx_buffer + prod + 2,
-			       start,
-			       c1);
-			memcpy(tx_buffer,
-			       start + c1,
-			       size - c1);
-		}
-	}
-	tx_buffer_producer += tx_size;
+	transfer_bytes(&size, 4);
+	transfer_bytes(start, size);
 }
 
 static void
 send_words(const struct word *w)
 {
-	unsigned tx_size;
-	unsigned prod;
-
-	tx_size = 6 + w->len;
-	while (tx_size + tx_buffer_producer - tx_buffer_consumer > TX_BUFFER_SIZE)
-		flush_some_output();
-	prod = tx_buffer_producer % TX_BUFFER_SIZE;
-
-	if ( (tx_buffer_producer + 4) / TX_BUFFER_SIZE ==
-	     tx_buffer_producer / TX_BUFFER_SIZE ) {
-		*(unsigned *)(tx_buffer + prod) = w->counter;
-	} else {
-		unsigned c1;
-		c1 = TX_BUFFER_SIZE - prod;
-		memcpy(tx_buffer + prod,
-		       &w->counter,
-		       c1);
-		memcpy(tx_buffer,
-		       (void *)&w->counter + c1,
-		       4 - c1);
-	}
-	tx_buffer_producer += 4;
+	transfer_bytes(&w->counter, 4);
 	send_word(w->word, w->len);
 }
 
@@ -265,8 +236,10 @@ main(int argc, char *argv[])
 
 		for (idx = 0; idx < NR_HASH_TABLE_SLOTS; idx++) {
 			struct word *w;
-			for (w = hash_table[idx]; w; w = w->next)
+			for (w = hash_table[idx]; w; w = w->next) {
+				assert(w->hash % NR_HASH_TABLE_SLOTS == idx);
 				send_words(w);
+			}
 		}
 
 		flush_output();
