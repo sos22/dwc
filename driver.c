@@ -65,6 +65,9 @@ struct worker {
 
 	int finished_hash_entries;
 
+	int recent_hash_prod;
+	int recent_hashes[64];
+
 	/* RX machine */
 #define RX_BUFFER_SIZE (1 << 20)
 #define MIN_READ_SIZE (64 << 10)
@@ -102,22 +105,25 @@ read_string(struct worker *w)
 }
 
 static void
-process_split_string(char *prefix, char *suffix)
+process_split_string(char *prefix, char *suffix, int worker1, int worker2)
 {
 	int plen = strlen(prefix);
 	int slen = strlen(suffix);
 	int total_len = plen + slen;
 	unsigned char *buf;
+	int idx;
 
 	buf = alloca(total_len+1);
 	memcpy(buf, prefix, plen);
 	memcpy(buf + plen, suffix, slen + 1);
 
-	bump_word_counter(buf, total_len, 1);
+	idx = bump_word_counter(buf, total_len, 1);
+	DBG("worker %d:%d produced split string in bucket %d\n",
+	    worker1, worker2, idx);
 }
 
 static int
-process_word_entry(struct worker *w)
+process_word_entry(struct worker *w, int wid)
 {
 	int size;
 	unsigned count;
@@ -132,7 +138,20 @@ process_word_entry(struct worker *w)
 	count = *(unsigned *)(w->rx_buffer + w->rx_buffer_used);
 	idx = bump_word_counter(w->rx_buffer + w->rx_buffer_used + 6, size, count);
 	w->rx_buffer_used += 6 + size;
-	assert(idx >= w->finished_hash_entries);
+	if (idx < w->finished_hash_entries + 1) {
+		int s;
+		DBG("worker %d went backwards through table: %d < %d\n",
+		    wid, idx, w->finished_hash_entries);
+		s = w->recent_hash_prod - 64;
+		if (s < 0)
+			s = 0;
+		while (s != w->recent_hash_prod) {
+			DBG("Recently produced %d\n", w->recent_hashes[s % 64]);
+			s++;
+		}
+	}
+	w->recent_hashes[w->recent_hash_prod++ % 64] = idx;
+	assert(idx >= w->finished_hash_entries + 1);
 	w->finished_hash_entries = idx - 1;
 	return 1;
 }
@@ -174,9 +193,10 @@ do_rx(struct worker *w, int is_first_worker, int is_last_worker, int id)
 		DBG("Worker %d starts receiving data\n", id);
 		if (!is_first_worker) {
 			if (w[-1].suffix_string)
-				process_split_string(w[-1].suffix_string, w->prefix_string);
+				process_split_string(w[-1].suffix_string, w->prefix_string,
+						     id - 1, id);
 		} else {
-			process_split_string("", w->prefix_string);
+			process_split_string("", w->prefix_string, -1, id);
 		}
 	}
 
@@ -188,13 +208,14 @@ do_rx(struct worker *w, int is_first_worker, int is_last_worker, int id)
 		}
 		if (!is_last_worker) {
 			if (w[1].prefix_string)
-				process_split_string(w->suffix_string, w[1].prefix_string);
+				process_split_string(w->suffix_string, w[1].prefix_string,
+						     id, id + 1);
 		} else {
-			process_split_string(w->suffix_string, "");
+			process_split_string(w->suffix_string, "", id, -1);
 		}
 	}
 
-	while (process_word_entry(w))
+	while (process_word_entry(w, id))
 		;
 
 	if (w->from_worker_fd == -1) {
@@ -377,6 +398,7 @@ main(int argc, char *argv[])
 			if (x != 0)
 				workers[x-1].end_of_chunk = workers[x].send_offset;
 		}
+		workers[x].finished_hash_entries = -1;
 		poll_slots_to_workers[x] = x;
 	}
 	workers[nr_workers - 1].end_of_chunk = size;
