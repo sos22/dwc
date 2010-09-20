@@ -21,6 +21,9 @@
 /* Throttle fast workers if we remain above 256MB after a GC pass. */
 #define THROTTLE_HEAP_SIZE (256 << 20)
 
+/* How much of the hash table have we GC'd? */
+static int last_gced_hash_slot;
+
 static double now(void);
 
 #define DBG(fmt, ...) fprintf(stderr, "%f: " fmt, now(), ## __VA_ARGS__ )
@@ -232,19 +235,17 @@ compact_heap(struct worker *worker, int nr_workers, struct pollfd *polls)
 	DBG("Discarding slots up to %d\n", earliest_finished_slot);
 	for (x = 0; x <= earliest_finished_slot; x++) {
 		struct word *w, *n;
-		if (hash_table[x] == BAD_HASH_SLOT_MARKER)
-			continue;
 		for (w = hash_table[x]; w; w = n) {
 			n = w->next;
 			printf("%16d %.*s\n",
 			       w->counter,
 			       w->len,
 			       w->word);
-			w->next = BAD_HASH_SLOT_MARKER;
 			free(w);
 		}
-		hash_table[x] = BAD_HASH_SLOT_MARKER;
+		hash_table[x] = NULL;
 	}
+	last_gced_hash_slot = earliest_finished_slot;
 	mi = mallinfo();
 	DBG("Done hash table GC; %d bytes still in use in heap\n", mi.uordblks);
 
@@ -460,12 +461,19 @@ main(int argc, char *argv[])
 
 	DBG("All done\n");
 
-	for (idx = 0; idx < NR_HASH_TABLE_SLOTS; idx++) {
+	for (idx = last_gced_hash_slot + 1; idx < NR_HASH_TABLE_SLOTS; idx++) {
 		struct word *w;
-		if (hash_table[idx] == BAD_HASH_SLOT_MARKER)
-			continue;
 		for (w = hash_table[idx]; w; w = w->next) {
-			assert(w != BAD_HASH_SLOT_MARKER);
+			printf("%16d %.*s\n",
+			       w->counter,
+			       w->len,
+			       w->word);
+		}
+	}
+	printf("Boundary screw ups:\n");
+	for (idx = 0; idx <= last_gced_hash_slot; idx++) {
+		struct word *w;
+		for (w = hash_table[idx]; w; w = w->next) {
 			printf("%16d %.*s\n",
 			       w->counter,
 			       w->len,
