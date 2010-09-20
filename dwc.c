@@ -205,7 +205,7 @@ main(int argc, char *argv[])
 	volatile int sent_initial_word;
 	int idx;
 
-	init_malloc();
+	init_malloc(true);
 
 	if (argc == 1)
 		errx(1, "need either --stdin or two port numbers");

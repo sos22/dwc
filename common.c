@@ -3,12 +3,15 @@
 #include <sys/mman.h>
 #include <assert.h>
 #include <err.h>
+#include <stdbool.h>
+#include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
 
 #include "dwc.h"
 
 struct word * hash_table[NR_HASH_TABLE_SLOTS];
+static bool use_bump_malloc;
 
 /* Never need to call free() -> use a bump allocator */
 #define ARENA_SIZE (2 << 20)
@@ -37,17 +40,21 @@ void *
 bump_malloc(size_t s)
 {
 	void *res;
-	s = (s + 7) & ~7;
-	if (current_arena->used + s > ARENA_SIZE) {
-		current_arena = new_arena();
-		assert(current_arena->used + s <= ARENA_SIZE);
+	if (use_bump_malloc) {
+		s = (s + 7) & ~7;
+		if (current_arena->used + s > ARENA_SIZE) {
+			current_arena = new_arena();
+			assert(current_arena->used + s <= ARENA_SIZE);
+		}
+		res = (void *)current_arena + current_arena->used;
+		current_arena->used += s;
+	} else {
+		res = calloc(s, 1);
 	}
-	res = (void *)current_arena + current_arena->used;
-	current_arena->used += s;
 	return res;
 }
 
-void
+int
 bump_word_counter(const unsigned char *start, unsigned size,
 		  unsigned count)
 {
@@ -72,7 +79,7 @@ bump_word_counter(const unsigned char *start, unsigned size,
 			cursor->next = hash_table[idx];
 			hash_table[idx] = cursor;
 			cursor->counter += count;
-			return;
+			return idx;
 		}
 		pprev = &cursor->next;
 	}
@@ -84,13 +91,15 @@ bump_word_counter(const unsigned char *start, unsigned size,
 	cursor->len = size;
 	memcpy(cursor->word, start, size);
 	hash_table[idx] = cursor;
-	return;
+	return idx;
 }
 
 void
-init_malloc(void)
+init_malloc(bool use_bump)
 {
-	current_arena = new_arena();
+	use_bump_malloc = use_bump;
+	if (use_bump)
+		current_arena = new_arena();
 }
 
 void

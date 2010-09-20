@@ -8,12 +8,18 @@
 #include <assert.h>
 #include <err.h>
 #include <poll.h>
+#include <malloc.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "dwc.h"
+
+/* Try to stay below 512MB */
+#define TARGET_MAX_HEAP_SIZE (512 << 20)
+/* Throttle fast workers if we remain above 256MB after a GC pass. */
+#define THROTTLE_HEAP_SIZE (256 << 20)
 
 static double now(void);
 
@@ -53,6 +59,8 @@ struct worker {
 
 	off_t send_offset;
 	off_t end_of_chunk;
+
+	int finished_hash_entries;
 
 	/* RX machine */
 #define RX_BUFFER_SIZE (1 << 20)
@@ -110,6 +118,7 @@ process_word_entry(struct worker *w)
 {
 	int size;
 	unsigned count;
+	int idx;
 
 	if (w->rx_buffer_used + 6 > w->rx_buffer_avail)
 		return 0;
@@ -118,8 +127,10 @@ process_word_entry(struct worker *w)
 		return 0;
 
 	count = *(unsigned *)(w->rx_buffer + w->rx_buffer_used);
-	bump_word_counter(w->rx_buffer + w->rx_buffer_used + 6, size, count);
+	idx = bump_word_counter(w->rx_buffer + w->rx_buffer_used + 6, size, count);
 	w->rx_buffer_used += 6 + size;
+	assert(idx >= w->finished_hash_entries);
+	w->finished_hash_entries = idx - 1;
 	return 1;
 }
 
@@ -203,6 +214,65 @@ now(void)
 	return tv.tv_sec + tv.tv_usec * 1e-6;
 }
 
+static void
+compact_heap(struct worker *worker, int nr_workers, struct pollfd *polls)
+{
+	int x;
+	int earliest_finished_slot;
+	struct mallinfo mi;
+	int throttle_worker_slot;
+
+	DBG("Start hash table GC\n");
+	earliest_finished_slot = NR_HASH_TABLE_SLOTS;
+	for (x = 0; x < nr_workers; x++) {
+		DBG("worker %d has finished slot %d\n", x, worker[x].finished_hash_entries);
+		if (worker[x].finished_hash_entries < earliest_finished_slot)
+			earliest_finished_slot = worker[x].finished_hash_entries;
+	}
+	DBG("Discarding slots up to %d\n", earliest_finished_slot);
+	for (x = 0; x <= earliest_finished_slot; x++) {
+		struct word *w, *n;
+		if (hash_table[x] == BAD_HASH_SLOT_MARKER)
+			continue;
+		for (w = hash_table[x]; w; w = n) {
+			n = w->next;
+			printf("%16d %.*s\n",
+			       w->counter,
+			       w->len,
+			       w->word);
+			w->next = BAD_HASH_SLOT_MARKER;
+			free(w);
+		}
+		hash_table[x] = BAD_HASH_SLOT_MARKER;
+	}
+	mi = mallinfo();
+	DBG("Done hash table GC; %d bytes still in use in heap\n", mi.uordblks);
+
+	if (mi.uordblks >= THROTTLE_HEAP_SIZE) {
+		throttle_worker_slot = earliest_finished_slot + 100;
+		DBG("Going to throttle mode; barrier is %d\n", throttle_worker_slot);
+	} else {
+		throttle_worker_slot = NR_HASH_TABLE_SLOTS;
+		DBG("Throttle disabled\n");
+	}
+
+	for (x = 0; x < nr_workers; x++) {
+		if (worker[x].finished_hash_entries >= throttle_worker_slot) {
+			if (polls[x].events & POLLIN)
+				DBG("Worker %d throttles at %d\n", x,
+				    worker[x].finished_hash_entries);
+			polls[x].events &= ~POLLIN;
+		} else if (worker[x].to_worker_fd == -1) {
+			if (!(polls[x].events & POLLIN))
+				DBG("worker %d unthrottled at %d\n", x,
+				    worker[x].finished_hash_entries);
+			polls[x].events |= POLLIN;
+		} else {
+			DBG("worker %d isn't ready to receive results yet\n", x);
+		}
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -219,8 +289,10 @@ main(int argc, char *argv[])
 	int offline;
 	int prepopulate;
 	int poll_slots_in_use;
+	struct mallinfo mi;
+	int cntr;
 
-	init_malloc();
+	init_malloc(false);
 	gettimeofday(&start, NULL);
 
 	if (argc == 1)
@@ -285,12 +357,16 @@ main(int argc, char *argv[])
 
 	workers_left_alive = nr_workers;
 	poll_slots_in_use = nr_workers;
+	cntr = 0;
 	DBG("Start main loop\n");
 	while (workers_left_alive != 0) {
 		int r = poll(polls, poll_slots_in_use, -1);
 		if (r < 0)
 			err(1, "poll()");
 		for (x = 0; x < poll_slots_in_use && r; x++) {
+			if (x == 3 && (cntr++ % 16))
+				continue;
+
 			if (!polls[x].revents)
 				continue;
 			r--;
@@ -375,17 +451,26 @@ main(int argc, char *argv[])
 				}
 			}
 		}
+
+		mi = mallinfo();
+		if (mi.uordblks > TARGET_MAX_HEAP_SIZE)
+			compact_heap(workers, nr_workers, polls);
+
 	}
 
 	DBG("All done\n");
 
 	for (idx = 0; idx < NR_HASH_TABLE_SLOTS; idx++) {
 		struct word *w;
-		for (w = hash_table[idx]; w; w = w->next)
+		if (hash_table[idx] == BAD_HASH_SLOT_MARKER)
+			continue;
+		for (w = hash_table[idx]; w; w = w->next) {
+			assert(w != BAD_HASH_SLOT_MARKER);
 			printf("%16d %.*s\n",
 			       w->counter,
 			       w->len,
 			       w->word);
+		}
 	}
 
 	return 0;
