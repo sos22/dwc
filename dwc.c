@@ -45,8 +45,10 @@ replenish_rx_buffer()
 	/* This has a nasty side effect: if a single word is bigger
 	 * than 1MB, we split it.  Not necessarily entirely correct,
 	 * but not completely unreasonable. */
-	if (rx_buffer_avail == RX_BUFFER_SIZE)
+	if (rx_buffer_avail == RX_BUFFER_SIZE) {
+		warnx("replenishing RX buffer when it was already full");
 		return;
+	}
 	rx = read(rx_fd, rx_buffer + rx_buffer_avail, RX_BUFFER_SIZE - rx_buffer_avail);
 	if (rx < 0)
 		err(1, "reading input");
@@ -261,7 +263,8 @@ find_first_word:
 	rx_buffer[rx_buffer_avail] = ' ';
 	for (initial_word_size = 0; !is_space(rx_buffer[initial_word_size]); initial_word_size++)
 		;
-	if (initial_word_size == rx_buffer_avail) {
+	if (initial_word_size == rx_buffer_avail &&
+	    rx_buffer_avail != RX_BUFFER_SIZE) {
 		replenish_rx_buffer();
 		goto find_first_word;
 	}
@@ -290,7 +293,8 @@ find_first_word:
 		     !is_space(rx_buffer[word_end]);
 		     word_end++)
 			;
-		if (word_end == rx_buffer_avail) {
+		if (word_end == rx_buffer_avail &&
+		    rx_buffer_avail != RX_BUFFER_SIZE) {
 			replenish_rx_buffer();
 			goto find_word;
 		}
