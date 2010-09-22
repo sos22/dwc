@@ -501,16 +501,22 @@ main(int argc, char *argv[])
 				      idx == 0,
 				      idx == nr_workers - 1,
 				      idx);
-				if (workers[idx].finished) {
-					memmove(poll_slots_to_workers + x,
-						poll_slots_to_workers + x + 1,
-						(workers_left_alive - x - 1) * sizeof(int));
-					memmove(polls + x,
-						polls + x + 1,
-						(workers_left_alive - x - 1) * sizeof(polls[0]));
-					poll_slots_in_use--;
-					workers_left_alive--;
-				}
+			}
+		}
+
+		for (x = 0; x < poll_slots_in_use; x++) {
+			idx = poll_slots_to_workers[x];
+			if (workers[idx].finished) {
+				DBG("expunge worker %d\n", idx);
+				memmove(poll_slots_to_workers + x,
+					poll_slots_to_workers + x + 1,
+					(poll_slots_in_use - x - 1) * sizeof(int));
+				memmove(polls + x,
+					polls + x + 1,
+					(poll_slots_in_use - x - 1) * sizeof(polls[0]));
+				poll_slots_in_use--;
+				workers_left_alive--;
+				x--;
 			}
 		}
 
