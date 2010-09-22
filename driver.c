@@ -26,7 +26,7 @@ static int last_gced_hash_slot = -1;
 
 static double now(void);
 
-#define DBG(fmt, ...) fprintf(stderr, "%f: " fmt, now(), ## __VA_ARGS__ )
+#define DBG(fmt, ...) fprintf(stderr, "driver: %f: " fmt, now(), ## __VA_ARGS__ )
 //#define DBG(fmt, ...) do {} while (0)
 
 static void
@@ -239,6 +239,7 @@ do_rx(struct worker *w, int is_first_worker, int is_last_worker, int id)
 		if (w->rx_buffer_used != w->rx_buffer_avail)
 			warnx("worker %d has %d bytes left over at end",
 			      id, w->rx_buffer_avail - w->rx_buffer_used);
+		DBG("finished worker %d\n", id);
 		w->finished = 1;
 	}
 }
@@ -292,7 +293,6 @@ compact_heap(struct worker *worker, int nr_workers, struct pollfd *polls)
 
 	earliest_finished_slot = NR_HASH_TABLE_SLOTS;
 	for (x = 0; x < nr_workers; x++) {
-		DBG("worker %d has finished slot %d\n", x, worker[x].finished_hash_entries);
 		if (worker[x].finished_hash_entries < earliest_finished_slot)
 			earliest_finished_slot = worker[x].finished_hash_entries;
 	}
@@ -437,16 +437,17 @@ main(int argc, char *argv[])
 			if (polls[x].revents & POLLERR)
 				errx(1, "error on worker %d", idx);
 			if (polls[x].revents & POLLHUP) {
-				if (polls[x].events == POLLIN) {
+				if (workers[idx].to_worker_fd < 0) {
 					polls[x].revents = POLLIN;
-					warnx("worker %d hung up on us", idx);
+					warnx("worker %d hung up on us, but that's okay", idx);
 				} else {
-					errx(1, "worker %d hung up on us", idx);
+					errx(1, "worker %d hung up on us when it really shouldn't have done", idx);
 				}
 			}
 
 			if (polls[x].revents & POLLOUT) {
 				ssize_t s;
+				assert(!offline);
 				assert(workers[idx].send_offset < workers[idx].end_of_chunk);
 				s = sendfile(workers[idx].to_worker_fd,
 					     fd,
