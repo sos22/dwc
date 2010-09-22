@@ -547,6 +547,7 @@ main(int argc, char *argv[])
 			       w->word);
 		}
 	}
+	DBG("Finished producing output\n");
 
 	return 0;
 }
