@@ -314,7 +314,7 @@ compact_heap(struct worker *worker, int nr_workers, struct pollfd *polls)
 	DBG("Done hash table GC; %d bytes still in use in heap\n", mi.uordblks);
 
 	if (mi.uordblks >= THROTTLE_HEAP_SIZE) {
-		throttle_worker_slot = earliest_finished_slot + 100;
+		throttle_worker_slot = earliest_finished_slot + 10000;
 		DBG("Going to throttle mode; barrier is %d\n", throttle_worker_slot);
 	} else {
 		throttle_worker_slot = NR_HASH_TABLE_SLOTS;
