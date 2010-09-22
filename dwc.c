@@ -17,7 +17,18 @@
 static int
 is_space(unsigned char c)
 {
-	return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\f';
+	return !((c >= '0' && c <= '9') ||
+		 (c >= 'A' && c <= 'Z') ||
+		 (c >= 'a' && c <= 'z'));
+}
+
+static void
+down_case(unsigned char *start, unsigned len)
+{
+	unsigned x;
+	for (x = 0; x < len; x++)
+		if (start[x] >= 'A' && start[x] <= 'Z')
+			start[x] = start[x] - 'A' + 'a';
 }
 
 /* Have a 1MB buffer */
@@ -298,6 +309,8 @@ find_first_word:
 			replenish_rx_buffer();
 			goto find_word;
 		}
+
+		down_case(rx_buffer + rx_buffer_used, word_end - rx_buffer_used);
 
 		bump_word_counter(rx_buffer + rx_buffer_used, word_end - rx_buffer_used, 1);
 		rx_buffer_used = word_end;
